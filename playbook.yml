@@ -1,0 +1,175 @@
+---
+- hosts: all
+  vars:
+# we have the vagrant user
+# and we can logon as root (see https://www.vagrantup.com/docs/boxes/base)
+  tasks:
+  - name: Install packages
+    become: true
+    apt:
+      name: git,make,gnustep,gnustep-devel,libsdl1.2-dev,libvorbis-dev,libopenal-dev,libespeak-dev,libnspr4-dev,g++,devscripts
+      state: present
+
+  - name: Checkout oolite
+    shell: 
+      cmd: "git clone --recurse-submodules -j6 https://github.com/HiranChaudhuri/oolite.git"
+      
+  - name: take snapshot of directory before
+    shell:
+      cmd: "find >files_before.txt"
+      
+  - name: create lib symlinks
+    become: true
+    shell:
+      cmd: "./make_so_links.sh"
+      chdir: /home/vagrant/oolite/deps/Linux-deps/x86_64/lib_linker
+
+  - name: create symlink for libgnustep-base 1.20
+    file:
+      src: "../lib/libgnustep-base.so.1.20"
+      dest: "/home/vagrant/oolite/deps/Linux-deps/x86_64/lib_linker/libgnustep-base.so"
+      state: link
+      force: yes
+      
+# one link - not enough
+#  - name: create symlink for libgnustep-base 1.20
+#    become: true
+#    file:
+#      src: "/home/vagrant/oolite/deps/Linux-deps/x86_64/lib/libgnustep-base.so.1.20"
+#      dest: "/usr/local/lib/libgnustep-base.so"
+#      state: link
+#      force: yes
+
+# all of them but names with versions
+#  - name: copy libraries to /usr/local/lib
+#    become: true
+#    copy:
+#      remote_src: true
+#      src: /home/vagrant/oolite/deps/Linux-deps/x86_64/lib/
+#      dest: /usr/local/lib/
+#      mode: "0555"
+      
+      
+  - name: copy libraries from /usr/local/lib_linker
+    become: true
+    copy:
+      remote_src: true
+      src: "/home/vagrant/oolite/deps/Linux-deps/x86_64/lib/{{ item.s }}"
+      dest: "/usr/local/lib/{{ item.d }}"
+      mode: "0555"
+    with_items:
+      - { s: libSDL-1.2.so.0, d: libSDL-1.2.so }
+      - { s: libffi.so.4, d: libffi.so }
+      - { s: libgnustep-base.so.1.20, d: libgnustep-base.so }
+      - { s: libhogweed.so.4, d: libhogweed.so }
+      - { s: libnspr4.so.0d, d: libnspr4.so }
+      - { s: libopenal.so.1, d: libopenal.so }
+      - { s: libpng14.so.14, d: libpng14.so }
+      - { s: libvorbisfile.so.3, d: libvorbisfile.so }
+      - { s: libespeak.so.1, d: libespeak.so }
+      - { s: libgcrypt.so.20, d: libgcrypt.so }
+      - { s: libgnutls.so.30, d: libgnutls.so }
+      - { s: libnettle.so.6, d: libnettle.so }
+      - { s: libobjc.so.2, d: libobjc.so }
+      - { s: libplc4.so.0d, d: libplc4.so }
+      - { s: libportaudio.so.2, d: libportaudio.so }
+      - { s: libz.so.1, d: libz.so }
+      - { s: libespeak.so.1.pulseaudio, d: libespeak.so }
+      - { s: libgmp.so.10, d: libgmp.so }
+      - { s: libgpg-error.so.0, d: libgpg-error.so }
+      - { s: libnsl.so.1, d: libnsl.so }
+      - { s: libogg.so.0, d: libogg.so }
+      - { s: libplds4.so.0d, d: libplds4.so }
+      - { s: libvorbis.so.0, d: libvorbis.so }
+
+      
+  - name: build!
+    shell:
+      cmd: ". /usr/share/GNUstep/Makefiles/GNUstep.sh; make -fMakefile pkg-posix-nightly messages=yes"
+      #cmd: ". /usr/share/GNUstep/Makefiles/GNUstep.sh; make -fMakefile pkg-debsnapshot messages=yes"
+      chdir: /home/vagrant/oolite
+    environment:
+      GNUSTEP_SH_EXPORT_ALL_VARIABLES: yes
+    failed_when: false
+    register: var_build
+    
+  - debug:
+      var: var_build
+      
+  - fail:
+      msg: Build failed.
+    when: var_build.rc != 0
+
+  - name: take snapshot of directory after
+    shell:
+      cmd: "find >files_after.txt"
+
+  - name: diff dir snapshots
+    shell:
+      cmd: "diff files_before.txt files_after.txt"
+    failed_when: false
+    register: var_newFiles
+    
+  - debug:
+      var: var_newFiles
+
+  - name: Copy buildAppDir script
+    copy:
+      src: buildAppDir.sh
+      dest: /home/vagrant
+      mode: "0755"
+
+  - name: Build AppDir
+    script:
+      cmd: buildAppDir.sh
+    
+  - name: Copy buildRelease script
+    copy:
+      src: buildRelease.sh
+      dest: /home/vagrant
+      mode: "0755"
+
+  - name: Build Release
+    script:
+      cmd: buildRelease.sh
+    
+  - name: Download AppRun
+    get_url:
+      url: https://github.com/AppImage/AppImageKit/releases/download/continuous/AppRun-x86_64
+      dest: /home/vagrant/AppDir/AppRun
+      mode: "0555"
+
+  - name: create .desktop
+    copy:
+      dest: "/home/vagrant/AppDir/oolite.desktop"
+      content: |
+        [Desktop Entry]
+        Name=Oolite
+        Comment=An OpenGL Elite-like space game
+        Exec=oolite
+        Icon=oolite-icon
+        Terminal=false
+        Type=Application
+        Categories=Game;Simulation;
+        StartupWMClass=oolite
+
+#  - name: Install prerequisites for appimage-builder
+#    become: true
+#    apt:
+#      name: python3-pip,python3-setuptools,patchelf,desktop-file-utils,libgdk-pixbuf2.0-dev,fakeroot,strace,fuse
+#      state: latest
+
+  - name: download aptimage-builder
+    become: true
+    get_url:
+      url: https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+      dest: /usr/local/bin/appimagetool
+      mode: "0555"
+    
+  - name: Build AppImage
+    become: true
+    shell: 
+      cmd: "/usr/local/bin/appimagetool /home/vagrant/AppDir /home/vagrant/Oolite-Linux-Nightly.AppImage"
+    environment:
+      ARCH: x86_64
+
